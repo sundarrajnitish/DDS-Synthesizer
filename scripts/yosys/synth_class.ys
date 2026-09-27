@@ -1,0 +1,11 @@
+# Open-source synthesis of the refactored RTL onto the same class.lib cells
+# that Design Compiler used. Input: the GHDL-converted RTL (formal/fv/frontend.py).
+#   python3 tools/liberty.py lib/class.lib --liberty-min build/class_min.lib
+#   yosys -s scripts/yosys/synth_class.ys
+read_verilog build/fe/rtl/design.v
+synth -top dds_synthesizer -flatten
+dfflibmap -liberty build/class_min.lib
+abc -liberty build/class_min.lib
+opt_clean -purge
+tee -o build/reports/yosys_synth_stat.txt stat -liberty build/class_min.lib
+write_verilog -noattr -noexpr netlists/yosys/dds_synthesizer_yosys.v

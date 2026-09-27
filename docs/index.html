@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DDS Formal Verification</title>
+<meta name="description" content="An interactive walk-through of the formal verification of a direct digital synthesizer: equivalence checking, automatic bug diagnosis, k-induction and theorem proving - with a real equivalence checker running in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%230b7a86%27/%3E%3Cpath d=%27M4 16 Q10 2 16 16 T28 16%27 stroke=%27%23fff%27 stroke-width=%273%27 fill=%27none%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=JetBrains+Mono:wght@400;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="#top">DDS<span>/</span>formal</a>
+    <nav class="toc" aria-label="Sections">
+      <a href="#design"><b>1</b>The DDS</a>
+      <a href="#synthesis"><b>2</b>RTL to gates</a>
+      <a href="#equivalence"><b>3</b>Equivalence</a>
+      <a href="#bugs"><b>4</b>Bug hunt</a>
+      <a href="#proofs"><b>5</b>Proofs</a>
+      <a href="#findings"><b>6</b>Findings</a>
+      <a href="#reproduce"><b>7</b>Reproduce</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch colour theme">theme</button>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ================================================================ HERO -->
+<section class="hero" id="top">
+  <div>
+    <div class="kicker label">COEN 6551 · formal hardware verification · revisited 2026</div>
+    <h1>42 failing compare points. 14 bugs. <em>One proof.</em></h1>
+    <p class="lede">A direct digital synthesizer was synthesized to gates, and then someone broke the netlist on purpose. This site walks through how formal verification finds every one of those bugs, and it runs a real equivalence checker in your browser while you read.</p>
+    <div class="stats" aria-label="Key results">
+      <div><b class="num">92</b><span>compare points: 20 outputs + 72 flip-flops</span></div>
+      <div><b class="num">42</b><span>failing in the buggy netlist</span></div>
+      <div><b class="num">14</b><span>bugs located and repaired automatically</span></div>
+      <div><b class="num" id="heroMs">&lt; 0.1 s</b><span>to re-prove all 92 points in this page</span></div>
+    </div>
+  </div>
+  <div class="instrument" aria-label="Live demonstration">
+    <div class="instrument-head">
+      <span class="label"><span class="led" id="heroLed"></span><span id="heroTitle">golden vs buggy netlist</span></span>
+      <span class="label num" id="heroCount">50 / 92 pass</span>
+    </div>
+    <div class="instrument-body">
+      <canvas id="heroScope" height="150" aria-label="DDS output waveform"></canvas>
+      <div style="margin-top:12px" class="cp-grid" id="heroGrid" role="img" aria-label="92 compare points"></div>
+      <div class="cp-legend"><span><i style="background:var(--pass)"></i>equivalent</span><span><i style="background:var(--fail)"></i>not equivalent</span><span>square = flip-flop · round = output bit</span></div>
+    </div>
+    <div class="controls">
+      <button class="btn" id="heroRepair" type="button">Apply the 14 fixes</button>
+      <button class="btn ghost" id="heroReset" type="button">Back to buggy</button>
+      <span class="small muted" id="heroNote">The grid is computed live with BDDs on the real netlists.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ 1 DESIGN -->
+<section class="chapter" id="design">
+  <div class="chapter-head">
+    <span class="chapter-no">1</span>
+    <h2>The design under test</h2>
+    <p>A DDS turns a number into a sine wave. Every clock it adds a frequency tuning word to a phase accumulator and looks the phase up in a sine table. Play with it before we try to break it.</p>
+  </div>
+
+  <div class="cols">
+    <div class="prose">
+      <p>The core is Martin Kumm's open-source <code>dds_synthesizer</code> (2009): a 32-bit phase accumulator, a 10-bit phase, and a 10-bit signed amplitude. Only a quarter of the sine period is stored (256 words). The two phase MSBs select the quadrant: bit 8 mirrors the table index, bit 9 negates the result.</p>
+      <p>The output frequency is</p>
+      <p class="mono" style="font-size:1.05rem">f<sub>out</sub> = FTW / 2<sup>N</sup> · f<sub>clk</sub>, &nbsp; N = 32</p>
+      <p>At 100&nbsp;MHz the frequency resolution is 100&nbsp;MHz / 2<sup>32</sup> ≈ 0.023&nbsp;Hz. The original datasheet writes 2<sup>M</sup> (the phase width) in this formula and 2<sup>N</sup> in the phase formula; the two exponents are swapped. Theorem T6 below proves the corrected version.</p>
+      <p>Four register stages sit between the inputs and <code>ampl_o</code>. A new phase offset reaches <code>phase_o</code> after one clock and <code>ampl_o</code> after three; a new tuning word takes one clock longer because it passes through the accumulator first. Step the pipeline and watch the values move.</p>
+    </div>
+    <figure class="fig" style="margin-top:0">
+      <div class="instrument">
+        <div class="instrument-head"><span class="label">Figure 1 · pipeline registers</span><span class="label num" id="cycleLbl">cycle 0</span></div>
+        <div class="instrument-body scroll-x">
+          <table class="data regs" id="regTable"></table>
+        </div>
+      </div>
+      <figcaption><b>Figure 1</b> Register values of the cycle-accurate model. Names match <code>rtl/dds_synthesizer.vhd</code>; the model is checked against the GHDL simulation sample by sample.</figcaption>
+    </figure>
+  </div>
+
+  <figure class="fig wide">
+    <div class="instrument">
+      <div class="instrument-head"><span class="label">Figure 2 · phase wheel, quarter-wave table and output</span><span class="label num" id="freqLbl"></span></div>
+      <div class="instrument-body">
+        <div class="split">
+          <div><canvas id="scope" height="260" aria-label="Output waveform"></canvas></div>
+          <div><canvas id="wheel" height="260" aria-label="Phase wheel and quarter-wave lookup table"></canvas></div>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="ctl"><label for="fSlider">output frequency</label><input type="range" id="fSlider" min="0" max="1000" value="330"><output id="fOut" class="val"></output></div>
+        <div class="ctl"><label for="ftwHex">FTW (hex, 32 bit)</label><input type="text" id="ftwHex" size="10" value="028F5C29" spellcheck="false"></div>
+        <div class="ctl"><label for="phSlider">phase offset phase_i</label><input type="range" id="phSlider" min="0" max="1023" value="0"><output id="phOut" class="val">0</output></div>
+        <div class="btn-row">
+          <button class="btn" id="runBtn" type="button">Run</button>
+          <button class="btn ghost" id="stepBtn" type="button">Step 1 clock</button>
+          <button class="btn ghost" id="rstBtn" type="button">Reset</button>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>Figure 2</b> Left: <code>ampl_o</code> (staircase) against the ideal sine. Right: the phase as a pointer, its quadrant, and which of the 256 stored words is read. In quadrants 2 and 4 the index runs backwards (2<sup>8</sup> − low); at exactly 90° and 270° that index would be 256, which does not fit in 8 bits, so the RTL has a special "peak" case.</figcaption>
+  </figure>
+
+  <figure class="fig wide">
+    <div class="instrument">
+      <div class="instrument-head"><span class="label">Figure 3 · spectrum of 4096 output samples</span><span class="label num" id="sfdrLbl"></span></div>
+      <div class="instrument-body"><canvas id="spec" height="220" aria-label="Output spectrum"></canvas></div>
+      <div class="controls">
+        <div class="ctl"><label for="mSel">phase width M (hardware: 10)</label>
+          <div class="seg" id="mSel" role="group" aria-label="Phase width"><button type="button">8</button><button type="button" class="on">10</button><button type="button">12</button><button type="button">14</button></div></div>
+        <div class="ctl"><label for="aSel">amplitude width A (hardware: 10)</label>
+          <div class="seg" id="aSel" role="group" aria-label="Amplitude width"><button type="button">6</button><button type="button">8</button><button type="button" class="on">10</button><button type="button">14</button></div></div>
+        <span class="small muted" style="max-width:40ch">Phase truncation puts spurs about 6&nbsp;dB × M below the carrier. Change M and watch the largest spur move.</span>
+      </div>
+    </div>
+    <figcaption><b>Figure 3</b> Blackman-Harris windowed FFT of the model output. SFDR is the distance from the carrier to the largest spur. Only 10 × 10 exists in silicon; the other settings run the same model with a regenerated table.</figcaption>
+  </figure>
+</section>
+
+<!-- ================================================================ 2 SYNTHESIS -->
+<section class="chapter" id="synthesis">
+  <div class="chapter-head">
+    <span class="chapter-no">2</span>
+    <h2>From RTL to gates</h2>
+    <p>Synthesis rewrites 110 lines of VHDL into about 620 standard cells. Nobody can review that by eye, which is why the rest of this page exists.</p>
+  </div>
+  <div class="cols">
+    <div class="prose">
+      <p>In 2024 the RTL was synthesized with Synopsys Design Compiler (<code>compile -exact_map</code>) onto <code>class.lib</code>, a teaching library with 109 cells such as <code>ND2</code> (2-input NAND), <code>AO2</code> (AND-OR-invert) and <code>FD2</code> (D flip-flop with asynchronous clear). The result is the <strong>golden netlist</strong>.</p>
+      <p>The course then handed out a second netlist of the same design, synthesized differently and with bugs planted in it. That <strong>buggy netlist</strong> is what we have to debug.</p>
+      <p>The repository now also synthesizes the refactored RTL with open-source Yosys + ABC onto the same library, and proves that result equivalent too.</p>
+    </div>
+    <div class="scroll-x">
+      <table class="data" id="synthTable"></table>
+      <p class="small muted" style="margin-top:8px">Area in class.lib units. Flip-flop counts differ because synthesis removes registers that can never change.</p>
+    </div>
+  </div>
+
+  <h3>What synthesis removed, and why that is fine</h3>
+  <div class="prose">
+    <p>The RTL has 74 flip-flops; Design Compiler kept 72. Every sine value is non-negative, so bit 9 of <code>lut_out</code> is always 0, and so is its delayed copy. An equivalence checker has to recognise such <em>constant registers</em> rather than report them as unmatched. Yosys went one step further: bit 0 of −x always equals bit 0 of x, so it merged <code>lut_out_inv_delay[0]</code> into <code>lut_out_delay[0]</code>. The checker in this repository matches such registers by function instead of name, the same signature analysis Formality performs.</p>
+  </div>
+
+  <h3>The refactored RTL</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>The original code mixes the non-standard <code>std_logic_arith</code> and <code>std_logic_unsigned</code> packages. That makes the comparison <code>phase(7 downto 0) = conv_std_logic_vector(0, 8)</code> ambiguous: a strict VHDL analyser (GHDL) rejects the file unless told to relax the rules.</p>
+      <p>The new <code>rtl/dds_synthesizer.vhd</code> uses only <code>numeric_std</code>, keeps every register name, documents each pipeline stage, and checks its generics. Because a refactor is exactly where silent mistakes hide, it is proven cycle-exact with the original: 94 of 94 compare points, including the two constant bits.</p>
+    </div>
+    <pre class="code" aria-label="Refactoring diff"><span class="c">-- original: ambiguous without -fexplicit</span>
+<span class="del">use IEEE.STD_LOGIC_arith.all;</span>
+<span class="del">use IEEE.STD_LOGIC_unsigned.all;</span>
+<span class="del">if quadrant_2_or_4 = '1' and phase(PHASE_WIDTH-3 downto 0)</span>
+<span class="del">   = conv_std_logic_vector(0, PHASE_WIDTH-2) then</span>
+<span class="c">-- refactored: numeric_std, named intent</span>
+<span class="add">use ieee.numeric_std.all;</span>
+<span class="add">peak &lt;= quadrant_2_or_4 = '1' and phase(QW-1 downto 0) = 0;</span>
+<span class="add">...</span>
+<span class="add">if peak then</span>
+<span class="add">  lut_out &lt;= to_signed(2**(AMPL_WIDTH-1) - 1, AMPL_WIDTH);</span></pre>
+  </div>
+</section>
+
+<!-- ================================================================ 3 EQUIVALENCE -->
+<section class="chapter" id="equivalence">
+  <div class="chapter-head">
+    <span class="chapter-no">3</span>
+    <h2>Equivalence checking</h2>
+    <p>Simulation asks "does it work for the inputs I tried?". Equivalence checking asks "is there any input at all on which these two circuits differ?", and answers with a proof or a counter-example.</p>
+  </div>
+
+  <h3>3.1 The miter</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>Connect both circuits to the same inputs and XOR their outputs. The circuits are equivalent exactly when that XOR can never be 1. On the right are two real ways to build the carry of a full adder: the textbook sum of products, and the single <code>AO5</code> cell plus inverter that the buggy netlist uses in its accumulator.</p>
+      <p>Three inputs means 8 cases, so we could simply try them all. For a 32-bit adder that would be 2<sup>64</sup> cases. Formal tools instead build a canonical representation, a <strong>binary decision diagram</strong>, or ask a <strong>SAT solver</strong> whether the XOR can be 1.</p>
+      <p>A BDD is canonical for a fixed variable order: two circuits compute the same function exactly when they produce the same diagram. Both carry circuits below collapse to the same diagram.</p>
+    </div>
+    <figure class="fig" style="margin-top:0">
+      <div class="instrument">
+        <div class="instrument-head"><span class="label">Figure 4 · miter of two carry circuits</span><span class="label" id="miterOut"></span></div>
+        <div class="instrument-body"><svg id="miterSvg" viewBox="0 0 520 250" role="img" aria-label="Two carry circuits joined by an XOR"></svg></div>
+        <div class="controls">
+          <div class="btn-row" id="miterIns"></div>
+          <button class="btn ghost" id="miterSweep" type="button">Try all 8 inputs</button>
+          <button class="btn ghost" id="miterBreak" type="button">Plant a bug</button>
+        </div>
+      </div>
+      <figcaption><b>Figure 4</b> Toggle a, b and c. "Plant a bug" swaps the first AND in circuit A for an OR, the same kind of cell swap found in the real netlist. The BDDs then differ and the sweep finds the failing inputs.</figcaption>
+    </figure>
+  </div>
+  <figure class="fig">
+    <div class="instrument">
+      <div class="instrument-head"><span class="label">Figure 5 · BDDs of both circuits (order a, b, c)</span><span class="label" id="bddVerdict"></span></div>
+      <div class="instrument-body"><svg id="bddSvg" viewBox="0 0 640 230" role="img" aria-label="Binary decision diagrams"></svg></div>
+    </div>
+    <figcaption><b>Figure 5</b> Solid edge = variable is 1, dashed = 0. Identical diagrams mean identical functions. A planted bug changes one diagram.</figcaption>
+  </figure>
+
+  <h3>3.2 Cutting a sequential design into compare points</h3>
+  <div class="prose">
+    <p>The DDS has memory, so comparing only outputs would require reasoning over every possible input sequence. Equivalence checkers avoid this by <strong>matching registers</strong>: when two flip-flops correspond (same name after synthesis, or same function), their outputs are treated as the same free variable. What remains is one combinational question per register input and per output bit. These are the <strong>compare points</strong>: 20 output bits plus 72 flip-flops gives the 92 you see in the Formality report.</p>
+    <p>If every compare point passes and the registers start in the same reset state, the designs agree on every clock cycle forever. That follows by induction on time: equal state and equal inputs give equal next state and equal outputs.</p>
+  </div>
+
+  <h3>3.3 Run it yourself</h3>
+  <div class="prose"><p>This is the real check, on the real netlists, computed in your browser. Pick an implementation, run it, and click any square for the counter-example. The 14 fixes from section 4 can be switched on one at a time to watch the failures disappear.</p></div>
+  <figure class="fig wide">
+    <div class="instrument">
+      <div class="instrument-head">
+        <span class="label"><span class="led" id="wbLed"></span>reference: golden netlist (Design Compiler, 621 cells)</span>
+        <span class="label num" id="wbStat"></span>
+      </div>
+      <div class="controls" style="border-top:0;border-bottom:1px solid var(--rule)">
+        <div class="ctl"><label>implementation</label>
+          <div class="seg" id="implSel" role="group" aria-label="Implementation">
+            <button type="button" data-impl="buggy" class="on">buggy hand-out</button>
+            <button type="button" data-impl="manual">2024 manual repair</button>
+            <button type="button" data-impl="fixed">auto-repaired</button>
+          </div>
+        </div>
+        <div class="ctl"><label>fixes applied to the buggy netlist</label><span class="val" id="fixCount">0 of 14</span></div>
+        <div class="btn-row"><button class="btn ghost" id="allFixes" type="button">Apply all</button><button class="btn ghost" id="noFixes" type="button">Clear</button></div>
+      </div>
+      <div class="instrument-body">
+        <div class="split">
+          <div>
+            <div class="cp-grid" id="wbGrid" style="grid-template-columns:repeat(23,minmax(0,1fr))"></div>
+            <div class="cp-legend" id="wbLegend"></div>
+            <table class="data" style="margin-top:12px" id="wbTable"></table>
+          </div>
+          <div>
+            <div class="label" style="margin-bottom:6px">compare point detail</div>
+            <div class="detail" id="wbDetail">Click a square.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>Figure 6</b> Formality-style result: passing and failing compare points by type. Each square is one BDD comparison. Counter-examples show the register and input values (as hex words) for which reference and implementation disagree.</figcaption>
+  </figure>
+</section>
+
+<!-- ================================================================ 4 BUGS -->
+<section class="chapter" id="bugs">
+  <div class="chapter-head">
+    <span class="chapter-no">4</span>
+    <h2>Hunting the bugs</h2>
+    <p>A failing compare point says where a difference is observed, not where the bug is. One wrong gate low in the accumulator carry chain fails 23 flip-flops at once.</p>
+  </div>
+
+  <h3>4.1 How it went in 2024</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>The original project debugged by hand in the Formality and Conformal schematic viewers: open a failing point, compare the reference and implementation cones side by side, trace back to the first gate that differs, patch the VHDL, re-run. The root-cause analysis diagram on the right shows the reasoning, from failing flip-flops back to their common parents.</p>
+      <p>Five repair attempts survive in the repository. They fixed the adders and the negation chain but never the lookup table, and each patch added cells:</p>
+      <div class="scroll-x"><table class="data" id="manualTable"></table></div>
+    </div>
+    <div class="gallery" style="grid-template-columns:1fr">
+      <figure><img class="shot" src="img/root_cause_analysis_2024.png" alt="2024 root cause analysis diagram tracing failing registers back to parent modules"><figcaption><b>2024</b> Root-cause analysis by hand.</figcaption></figure>
+    </div>
+  </div>
+  <div class="gallery" style="margin-top:16px">
+    <figure><img class="shot" src="img/formality_buggy_check.jpg" alt="Synopsys Formality: verification failed, 50 passing and 42 failing compare points"><figcaption><b>2024</b> Formality: 50 passing, 42 failing (all DFF).</figcaption></figure>
+    <figure><img class="shot" src="img/conformal_buggy_check.jpg" alt="Cadence Conformal mapping manager with the same 42 non-equivalent points"><figcaption><b>2024</b> Conformal agrees: 50 equivalent, 42 non-equivalent.</figcaption></figure>
+    <figure><img class="shot" src="img/formality_schematic_phase_reg_3.jpg" alt="Formality schematic comparing reference and implementation cones of phase_reg_3"><figcaption><b>2024</b> Side-by-side cones of <code>phase_reg_3</code>.</figcaption></figure>
+    <figure><img class="shot" src="img/conformal_prove_inverted.jpg" alt="Conformal prove dialog reporting two nets inverted-equivalent"><figcaption><b>2024</b> Conformal's <code>prove</code>: two internal nets are inverted-equivalent.</figcaption></figure>
+  </div>
+
+  <h3>4.2 Automatic diagnosis</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>The new flow (<code>formal/fv/diagnose.py</code>) automates that hunt with a classic design-error model:</p>
+      <ol>
+        <li><strong>Simulate</strong> both netlists on 2048 random states at once, one bit per test.</li>
+        <li><strong>Localise</strong>: flip each gate's output; a gate that corrects failing vectors is a suspect.</li>
+        <li><strong>Correct</strong>: try the likely mistakes at each suspect: wrong cell type, swapped pins, missing or extra inverter, flip-flop wired to the wrong net. Keep a change only if it repairs a compare point and breaks nothing.</li>
+        <li><strong>Escalate</strong> for interacting bugs: rewire to a dangling driver plus a gate fix, or a two-gate search that may undo an earlier guess.</li>
+        <li><strong>Prove</strong> the patched netlist with SAT. Nothing is accepted on simulation alone.</li>
+      </ol>
+      <p>The whole run takes about five seconds. The chart shows the failing (point, vector) pairs after each step, taken from the actual log.</p>
+    </div>
+    <figure class="fig" style="margin-top:0">
+      <div class="instrument">
+        <div class="instrument-head"><span class="label">Figure 7 · diagnosis replay</span><span class="label" id="replayLbl"></span></div>
+        <div class="instrument-body"><canvas id="replay" height="260" aria-label="Failing pairs per diagnosis step"></canvas></div>
+      </div>
+      <figcaption><b>Figure 7</b> Each point is one accepted correction. The back-track near the end undoes an earlier guess (removing an "extra inverter") in favour of two gate fixes that together explain two failing LUT bits.</figcaption>
+    </figure>
+  </div>
+
+  <h3>4.3 The fourteen bugs</h3>
+  <div class="prose"><p>Eleven cells have the wrong type and three flip-flops are wired to the wrong net. For those three the correct drivers were still in the netlist, connected to nothing. Their Design Compiler names, <code>N371</code>, <code>N375</code> and <code>N376</code>, sit in the same sequence as the D-input nets of their neighbouring flip-flops (<code>N372</code>, <code>N374</code>, <code>N377</code>). Tick a card to apply its fix in Figure 6.</p></div>
+  <div class="bug-list" id="bugList" style="margin-top:16px"></div>
+
+  <h3>4.4 Would simulation have found them?</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>For each bug alone, 256 random tests ran from reset for 2048 clocks each, with a random tuning word and phase offset, comparing every output on every clock. Almost every test exposed each lookup-table and negation bug within 100 cycles. Bugs in the accumulator carry chain need a specific carry pattern to reach the top bits, and most random tests never see them.</p>
+      <p>The equivalence check finds each of them in one pass, with an exact counter-example, and proves the absence of any others.</p>
+    </div>
+    <figure class="fig" style="margin-top:0">
+      <div class="instrument">
+        <div class="instrument-head"><span class="label">Figure 8 · share of random tests that detect each bug</span></div>
+        <div class="instrument-body"><canvas id="svf" height="360" aria-label="Detection rate per bug"></canvas></div>
+      </div>
+      <figcaption><b>Figure 8</b> Bar length: tests (out of 256) whose outputs differed from the golden netlist within 2048 cycles. Formal verification: 14 of 14.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ================================================================ 5 PROOFS -->
+<section class="chapter" id="proofs">
+  <div class="chapter-head">
+    <span class="chapter-no">5</span>
+    <h2>Proving properties and theorems</h2>
+    <p>Equivalence checking needs a trusted reference. When there is none, we state what the design must do and prove it.</p>
+  </div>
+
+  <div class="three">
+    <div class="card"><h4>Equivalence checking</h4><p>Design A against design B. Needs a golden reference; answers "did anything change?". Used for RTL vs netlist and golden vs buggy.</p></div>
+    <div class="card"><h4>Property checking</h4><p>One design against a specification written as assertions. Proven by bounded model checking and induction over clock cycles.</p></div>
+    <div class="card"><h4>Theorem proving</h4><p>General mathematical facts the design relies on, proven for all inputs, here with the Z3 SMT solver over bit-vectors.</p></div>
+  </div>
+
+  <h3>5.1 Induction over time</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>To prove "P holds in every reachable state" we prove two things. <strong>Base:</strong> starting from reset, P holds for the first k cycles. <strong>Step:</strong> from <em>any</em> state, if P held for k consecutive cycles, it holds in the next one.</p>
+      <p>The step starts from any state, including states the design can never reach. With k = 1 the solver can pick an unreachable state that satisfies P but steps straight into a violation. Such a state is a counter-example to induction. It is not a bug, just a proof that is too weak. A larger k, or an extra invariant, rules it out.</p>
+      <p>The toy on the right is a 3-bit counter that wraps from 5 back to 0, with the property "never 7". States 6 and 7 are unreachable. Try the step case with k = 1, then with k = 2.</p>
+    </div>
+    <figure class="fig" style="margin-top:0">
+      <div class="instrument">
+        <div class="instrument-head"><span class="label">Figure 9 · k-induction on a wrap-at-5 counter</span><span class="label" id="kiVerdict"></span></div>
+        <div class="instrument-body"><svg id="kiSvg" viewBox="0 0 460 250" role="img" aria-label="State graph of a counter"></svg></div>
+        <div class="controls">
+          <div class="ctl"><label>k</label><div class="seg" id="kSel" role="group" aria-label="k"><button type="button" class="on">1</button><button type="button">2</button><button type="button">3</button></div></div>
+          <div class="btn-row"><button class="btn ghost" id="kiBase" type="button">Base case</button><button class="btn" id="kiStep" type="button">Step case</button></div>
+        </div>
+      </div>
+      <figcaption><b>Figure 9</b> Green: reachable from reset. Red outline: violates P. The highlighted path is what the SAT solver returns.</figcaption>
+    </figure>
+  </div>
+
+  <h3>5.2 Four properties of the DDS</h3>
+  <div class="prose">
+    <p>A monitor (<code>formal/props/dds_props.vhd</code>) wraps the RTL and compares it against an independent specification: a full 1024-entry sine table computed straight from sin(), with no quadrant folding. Each property is proven by k-induction in the repository's own SAT-based engine. All four fail the step at k = 1 (pipeline registers can hold combinations no real input sequence produces) and are proven at k = 2.</p>
+  </div>
+  <div class="scroll-x" style="margin-top:12px"><table class="data" id="propTable"></table></div>
+
+  <h3>5.3 Who checks the specification?</h3>
+  <div class="prose"><p>A proof is only as strong as its properties. To test them, seven realistic mistakes were planted in copies of the RTL. Bounded model checking must find a counter-example trace for each. All seven were caught.</p></div>
+  <div class="scroll-x" style="margin-top:12px"><table class="data" id="mutTable"></table></div>
+
+  <h3>5.4 Theorems behind the design</h3>
+  <div class="prose"><p>Some facts sit below any particular implementation: why a quarter table is enough, why negation cannot overflow, why the frequency formula holds. Z3 proves each for every input by showing its negation unsatisfiable. T2b is deliberately false: its counter-example, phase = 256, is the reason the RTL needs its peak special case.</p></div>
+  <div class="scroll-x" style="margin-top:12px"><table class="data" id="thmTable"></table></div>
+
+  <h3>5.5 A better pipeline, proven equal</h3>
+  <div class="cols">
+    <div class="prose">
+      <p>The original registers both +sin and −sin and picks one with a multiplexer after the registers, so the output is combinational. <code>rtl/dds_synthesizer_lean.vhd</code> applies the sign before a single output register: 62 flip-flops instead of 74, a registered glitch-free output, and the same value on every clock.</p>
+      <p>Name matching fails here because 22 of the original's flip-flops and 10 of the new design's have no partner. The proof matches the 52 registers that do correspond and lets k-induction handle the rest. As with the properties, k = 1 is undecided and k = 2 proves it.</p>
+    </div>
+    <div class="scroll-x"><table class="data" id="leanTable"></table></div>
+  </div>
+</section>
+
+<!-- ================================================================ 6 FINDINGS -->
+<section class="chapter" id="findings">
+  <div class="chapter-head">
+    <span class="chapter-no">6</span>
+    <h2>Findings</h2>
+    <p>What the revisit established, each backed by a check that runs in the repository's CI.</p>
+  </div>
+  <ol class="findings" id="findingsList">
+    <li><div><h4>The buggy netlist contains exactly 14 bugs</h4><p>11 cells of the wrong type (ND2I where OR2 belongs, OR3 where AN3 or NR3 belongs, and similar) and 3 flip-flops wired to the wrong net. Repairing only those 14 cells, without adding a single cell, makes all 92 compare points pass against both the golden netlist and the original RTL.</p></div></li>
+    <li><div><h4>The misrouted flip-flops left their real drivers dangling</h4><p>Three XOR cells in the buggy netlist drive nothing. They are the intended D inputs of <code>lut_out_inv_delay</code> bits 1, 5 and 6; their net names continue the numbering of the neighbouring D nets. Dangling logic next to a failing register is a strong diagnostic hint.</p></div></li>
+    <li><div><h4>The 2024 manual repair reached 88 of 92</h4><p>The last attempt fixed the adders and the negation chain by adding 48 cells. The four failing points left were all lookup-table bits (<code>lut_out</code> 0, 2, 5 and 6), caused by four wrong gates in the table decode logic.</p></div></li>
+    <li><div><h4>Random simulation misses the accumulator bugs</h4><p>Only 7% of 2048-cycle random tests expose the carry bug at <code>add_98/u180</code>, and under half expose the others in the accumulator. By contrast, more than 99% of tests exposed every table and negation bug within 100 cycles.</p></div></li>
+    <li><div><h4>The datasheet's frequency formula has its exponents swapped</h4><p>It should read f = FTW / 2<sup>N</sup> · f<sub>clk</sub> with N the accumulator width, and φ = PTW / 2<sup>M</sup> · 2π with M the phase width. The repository README carried the error forward; both are corrected.</p></div></li>
+    <li><div><h4>The original RTL is not portable VHDL</h4><p>Mixing <code>std_logic_arith</code> with <code>std_logic_unsigned</code> makes one comparison ambiguous; GHDL rejects it without <code>-fexplicit</code>. The refactored RTL uses <code>numeric_std</code> only, analyses cleanly as VHDL-93 and VHDL-2008, and is proven cycle-exact with the original.</p></div></li>
+    <li><div><h4>Three flip-flops in the RTL are redundant</h4><p><code>lut_out[9]</code> and <code>lut_out_delay[9]</code> are always zero, and <code>lut_out_inv_delay[0]</code> always equals <code>lut_out_delay[0]</code>. The lean pipeline removes 12 flip-flops in total and registers the output, proven equivalent by k-induction.</p></div></li>
+    <li><div><h4><code>phase_o</code> leads <code>ampl_o</code> by two clocks</h4><p>The phase output is the stage-1 register, while the amplitude it produces appears two stages later. Anyone using both outputs together must delay the phase. This is now documented in the RTL header.</p></div></li>
+  </ol>
+</section>
+
+<!-- ================================================================ 7 REPRODUCE -->
+<section class="chapter" id="reproduce">
+  <div class="chapter-head">
+    <span class="chapter-no">7</span>
+    <h2>Reproduce everything</h2>
+    <p>Formality and Conformal need licences. Every result on this page also comes from open-source tools, in one command.</p>
+  </div>
+  <div class="cols">
+    <div class="prose">
+      <pre class="code"><span class="c"># Ubuntu 24.04: GHDL, Yosys, Python solvers</span>
+sudo apt install ghdl yosys
+pip install -r requirements.txt
+
+make quick    <span class="c"># formal flow, ~30 s</span>
+make sim      <span class="c"># GHDL testbench on 6 implementations</span>
+make formal   <span class="c"># + simulation vs formal experiment</span>
+make site     <span class="c"># refresh docs/data for this page</span></pre>
+      <p>Four independent engines agree on every result: the SAT checker built on GHDL and Yosys, Yosys's own <code>equiv_induct</code>, the netlist simulator used for diagnosis, and the BDD checker in this page. The original Formality and Conformal scripts are kept, cleaned up, in <code>scripts/</code>.</p>
+    </div>
+    <div class="scroll-x">
+      <table class="data">
+        <thead><tr><th>path</th><th>contents</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">rtl/</td><td>refactored RTL, lean variant, original in <code>rtl/original/</code></td></tr>
+          <tr><td class="mono">netlists/</td><td>golden, buggy, repaired, Yosys, 2024 attempts</td></tr>
+          <tr><td class="mono">formal/fv/</td><td>front-end, SAT equivalence checker, diagnosis, k-induction, theorems</td></tr>
+          <tr><td class="mono">formal/props/</td><td>property monitor and full-wave specification</td></tr>
+          <tr><td class="mono">tb/</td><td>self-checking GHDL testbench</td></tr>
+          <tr><td class="mono">tools/</td><td>Liberty reader, netlist reader and patcher, LUT generator, Python model</td></tr>
+          <tr><td class="mono">scripts/</td><td>Design Compiler, Formality, Conformal and Yosys scripts</td></tr>
+          <tr><td class="mono">docs/</td><td>this site; the checker lives in <code>docs/js/</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <footer>
+    <span>DDS core © 2009 Martin Kumm (GPL-3.0). Verification project by Nithish Sundarraj, Concordia University, 2024; revisited 2026.</span>
+    <span><a href="https://github.com/sundarrajnithish/DDS-Synthesizer">github.com/sundarrajnithish/DDS-Synthesizer</a></span>
+  </footer>
+</section>
+
+</main>
+
+<script src="js/bdd.js"></script>
+<script src="js/checker.js"></script>
+<script src="js/dds.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

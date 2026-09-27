@@ -1,0 +1,13 @@
+build/
+__pycache__/
+*.pyc
+*.cf
+*.o
+# commercial tool scratch output (run from scripts/)
+scripts/**/work/
+scripts/**/FM_WORK*/
+scripts/**/*.lck
+scripts/**/*.log
+scripts/**/*.rpt
+scripts/**/*.ddc
+scripts/**/.lec*

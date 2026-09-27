@@ -1,0 +1,31 @@
+name: formal verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GHDL, Yosys and the Python solvers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghdl yosys
+          python3 -m pip install -r requirements.txt
+      - name: Lint (VHDL-93 and VHDL-2008)
+        run: make lint
+      - name: Formal flow (equivalence, repair, induction, mutants, theorems)
+        run: make quick
+      - name: Simulation (RTL, lean, golden, fixed must pass; buggy must fail)
+        run: make sim
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            build/reports
+            netlists/fixed
