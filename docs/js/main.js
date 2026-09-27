@@ -346,55 +346,77 @@
       const go = () => { a = k >> 2 & 1; b = k >> 1 & 1; c = k & 1; draw(k); k++; if (k > 7) clearInterval(sweepT); };
       if (reduced) { for (k = 0; k < 8;) go(); } else { go(); sweepT = setInterval(go, 380); }
     });
-    function wire(x1, y1, x2, y2, v) {
-      const col = v ? tok("--trace") : tok("--rule-strong");
-      const mx = (x1 + x2) / 2;
-      return `<path d="M${x1} ${y1} H${mx} V${y2} H${x2}" fill="none" stroke="${col}" stroke-width="${v ? 2.2 : 1.4}"/>`;
+    // ---- schematic drawing: input lanes on the left, orthogonal wires, no shared segments
+    const LANE = { a: 70, b: 86, c: 102 };           // vertical input buses
+    const IN_Y = { a: 44, b: 84, c: 124 };           // input terminals
+    function col(v) { return v ? tok("--trace") : tok("--rule-strong"); }
+    function seg(pts, v) {                           // orthogonal polyline through points
+      return `<polyline points="${pts.map(p => p.join(",")).join(" ")}" fill="none" stroke="${col(v)}" stroke-width="${v ? 2.2 : 1.4}" stroke-linejoin="round"/>`;
     }
-    function gate(x, y, label, v, wdt = 46) {
-      return `<rect x="${x}" y="${y - 14}" width="${wdt}" height="28" rx="3" fill="${tok("--surface")}" stroke="${tok("--ink")}" stroke-width="1.2"/>` +
-        `<text x="${x + wdt / 2}" y="${y + 4}" text-anchor="middle" font-family="${tok("--f-mono")}" font-size="11" fill="${tok("--ink")}">${label}</text>` +
-        `<circle cx="${x + wdt + 6}" cy="${y}" r="3" fill="${v ? tok("--trace") : tok("--rule-strong")}"/>`;
+    function dot(x, y, v) { return `<circle cx="${x}" cy="${y}" r="2.8" fill="${col(v)}"/>`; }
+    function tap(lane, v, x2, y) {                   // from an input bus to a gate pin
+      return seg([[LANE[lane], y], [x2, y]], v) + dot(LANE[lane], y, v);
     }
-    function draw(sweepRow) {
-      const ab = bug ? (a | b) : (a & b), x = a ^ b, cx = c & x, A = fA(a, b, c), B = fB(a, b, c), X = A ^ B, maj = (a & b) | (a & c) | (b & c);
+    function gate(x, yc, label, out, nIn = 2, w = 52) {
+      const h = nIn === 3 ? 42 : 30;
+      return `<rect x="${x}" y="${yc - h / 2}" width="${w}" height="${h}" rx="3" fill="${tok("--surface")}" stroke="${tok("--ink")}" stroke-width="1.2"/>` +
+        `<text x="${x + w / 2}" y="${yc + 4}" text-anchor="middle" font-family="${tok("--f-mono")}" font-size="11" fill="${tok("--ink")}">${label}</text>` +
+        `<circle cx="${x + w}" cy="${yc}" r="3" fill="${col(out)}"/>`;
+    }
+    function draw() {
+      const g1 = bug ? (a | b) : (a & b), x = a ^ b, g3 = c & x, A = fA(a, b, c), maj = (a & b) | (a & c) | (b & c), B = fB(a, b, c), X = A ^ B;
+      const v = { a, b, c };
+      const t = (x, y, str, anchor = "start", color = tok("--muted"), size = 11) => `<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="${tok("--f-mono")}" font-size="${size}" fill="${color}">${str}</text>`;
       let s = "";
-      const inY = { a: 40, b: 95, c: 150 };
-      const t = (x, y, str, anchor = "start", col = tok("--muted"), size = 11) => `<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="${tok("--f-mono")}" font-size="${size}" fill="${col}">${str}</text>`;
+      // region frames
+      s += `<rect x="124" y="20" width="262" height="138" rx="4" fill="none" stroke="${tok("--rule")}" stroke-dasharray="3 3"/>`;
+      s += `<rect x="124" y="172" width="262" height="72" rx="4" fill="none" stroke="${tok("--rule")}" stroke-dasharray="3 3"/>`;
+      s += t(132, 34, "circuit A · sum of products");
+      s += t(132, 186, "circuit B · AO5 + inverter (buggy netlist style)");
+      // input terminals and buses
+      ["a", "b", "c"].forEach(n => {
+        s += seg([[36, IN_Y[n]], [LANE[n], IN_Y[n]]], v[n]) + seg([[LANE[n], IN_Y[n]], [LANE[n], 236]], v[n]);
+      });
       // circuit A
-      s += t(80, 14, "circuit A: sum of products", "start");
-      s += wire(40, inY.a, 90, 38, a) + wire(40, inY.b, 90, 50, b);
-      s += wire(40, inY.a, 90, 88, a) + wire(40, inY.b, 90, 100, b);
-      s += gate(90, 44, bug ? "OR" : "AND", ab) + gate(90, 94, "XOR", x);
-      if (bug) s += `<rect x="86" y="26" width="54" height="36" rx="4" fill="none" stroke="${tok("--fail")}" stroke-dasharray="4 3"/>`;
-      s += wire(142, 94, 168, 100, x) + wire(40, inY.c, 168, 112, c);
-      s += gate(168, 106, "AND", cx);
-      s += wire(142, 44, 236, 66, ab) + wire(220, 106, 236, 80, cx);
-      s += gate(236, 73, "OR", A);
+      s += tap("a", a, 150, 52) + tap("b", b, 150, 66);                 // G1 pins
+      s += gate(150, 59, bug ? "OR" : "AND", g1);
+      if (bug) s += `<rect x="145" y="39" width="62" height="40" rx="5" fill="none" stroke="${tok("--fail")}" stroke-width="1.6" stroke-dasharray="4 3"/>` + t(176, 94, "planted bug", "middle", tok("--fail"), 9);
+      s += tap("a", a, 150, 106) + tap("b", b, 150, 120);               // G2 pins (XOR)
+      s += gate(150, 113, "XOR", x);
+      s += seg([[202, 113], [224, 113], [224, 124], [238, 124]], x);      // XOR -> G3
+      s += tap("c", c, 238, 138);                                        // c -> G3 (passes under G2 row)
+      s += gate(238, 131, "AND", g3);
+      s += seg([[202, 59], [300, 59], [300, 84], [312, 84]], g1);         // G1 -> OR
+      s += seg([[290, 131], [300, 131], [300, 98], [312, 98]], g3);       // G3 -> OR
+      s += gate(312, 91, "OR", A, 2, 44);
       // circuit B
-      s += t(80, 188, "circuit B: AO5 cell + inverter (as in the buggy netlist)", "start");
-      s += wire(40, inY.a, 110, 200, a) + wire(40, inY.b, 110, 212, b) + wire(40, inY.c, 110, 224, c);
-      s += gate(110, 212, "AO5", 1 - maj, 50) + wire(166, 212, 190, 212, 1 - maj) + gate(190, 212, "IV", B, 36);
+      s += tap("a", a, 150, 200) + tap("b", b, 150, 213) + tap("c", c, 150, 226);
+      s += gate(150, 213, "AO5", 1 - maj, 3);
+      s += seg([[202, 213], [240, 213]], 1 - maj);
+      s += gate(240, 213, "IV", B, 1, 40);
       // miter
-      s += wire(292, 73, 330, 130, A) + wire(232, 212, 330, 146, B);
-      s += gate(330, 138, "XOR", X);
-      s += `<rect x="326" y="120" width="54" height="36" rx="4" fill="none" stroke="${X ? tok("--fail") : tok("--pass")}" stroke-width="2"/>`;
-      s += t(356, 175, X ? "outputs differ" : "outputs agree", "middle", X ? tok("--fail") : tok("--pass"), 11);
-      // inputs
-      ["a", "b", "c"].forEach(nm => {
-        const v = nm === "a" ? a : nm === "b" ? b : c;
-        s += `<circle cx="28" cy="${inY[nm]}" r="11" fill="${v ? tok("--trace") : tok("--surface")}" stroke="${tok("--ink")}"/>` + t(28, inY[nm] + 4, nm, "middle", v ? tok("--surface") : tok("--ink"), 12);
+      s += seg([[356, 91], [400, 91], [400, 128], [420, 128]], A);
+      s += seg([[280, 213], [400, 213], [400, 142], [420, 142]], B);
+      s += gate(420, 135, "XOR", X, 2, 48);
+      s += `<rect x="414" y="115" width="60" height="40" rx="5" fill="none" stroke="${X ? tok("--fail") : tok("--pass")}" stroke-width="2"/>`;
+      s += t(444, 172, X ? "outputs differ" : "outputs agree", "middle", X ? tok("--fail") : tok("--pass"), 11);
+      s += t(444, 106, "miter", "middle");
+      // input circles on top of their wires
+      ["a", "b", "c"].forEach(n => {
+        s += `<circle cx="26" cy="${IN_Y[n]}" r="11" fill="${v[n] ? tok("--trace") : tok("--surface")}" stroke="${tok("--ink")}"/>` +
+          t(26, IN_Y[n] + 4, n, "middle", v[n] ? tok("--surface") : tok("--ink"), 12);
       });
       // truth table
-      s += t(420, 14, "a b c  A B  A⊕B", "start", tok("--muted"), 10);
+      const cx = [498, 512, 526, 546, 560, 580];
+      ["a", "b", "c", "A", "B", "A⊕B"].forEach((h, i) => { s += t(cx[i], 34, h, "middle", tok("--muted"), 10); });
       for (let k = 0; k < 8; k++) {
         const aa = k >> 2 & 1, bb = k >> 1 & 1, cc = k & 1, ra = fA(aa, bb, cc), rb = fB(aa, bb, cc);
-        const y = 30 + k * 16, cur = aa === a && bb === b && cc === c;
-        if (cur) s += `<rect x="414" y="${y - 11}" width="100" height="15" fill="${tok("--accent-soft")}"/>`;
-        s += t(420, y, `${aa} ${bb} ${cc}  ${ra} ${rb}  ${ra ^ rb}`, "start", ra ^ rb ? tok("--fail") : tok("--ink-2"), 10);
+        const y = 52 + k * 18, cur = aa === a && bb === b && cc === c;
+        if (cur) s += `<rect x="488" y="${y - 12}" width="104" height="17" rx="2" fill="${tok("--accent-soft")}"/>`;
+        [aa, bb, cc, ra, rb, ra ^ rb].forEach((val, i) => { s += t(cx[i], y, val, "middle", i === 5 && val ? tok("--fail") : tok("--ink-2"), 11); });
       }
       svg.innerHTML = s;
-      ["a", "b", "c"].forEach(nm => { $("#in_" + nm).textContent = `${nm} = ${nm === "a" ? a : nm === "b" ? b : c}`; });
+      ["a", "b", "c"].forEach(nm => { $("#in_" + nm).textContent = `${nm} = ${v[nm]}`; });
       let diff = 0; for (let k = 0; k < 8; k++) diff += fA(k >> 2 & 1, k >> 1 & 1, k & 1) ^ fB(k >> 2 & 1, k >> 1 & 1, k & 1);
       $("#miterOut").textContent = diff ? `${diff} of 8 inputs differ` : "equivalent on all 8 inputs";
     }
@@ -510,10 +532,11 @@
     $("#replayLbl").textContent = `${steps.length - 1} steps · ${RES.repair.seconds} s including proofs`;
     function draw() {
       const { c, w, h } = ctx2d($("#replay"));
-      const pad = 46, bot = h - 26, top = 26, max = steps[0].pairs;
+      const pad = 46, bot = h - 26, top = 28;
+      const stepV = 2500, max = Math.ceil(steps[0].pairs / stepV) * stepV;
       const X = i => pad + i / (steps.length - 1) * (w - pad - 12), Y = v => bot - v / max * (bot - top);
       c.font = "10px " + tok("--f-mono"); c.fillStyle = tok("--muted"); c.strokeStyle = tok("--rule"); c.textAlign = "right";
-      for (let k = 0; k <= 4; k++) { const v = max * k / 4; c.beginPath(); c.moveTo(pad, Y(v)); c.lineTo(w - 12, Y(v)); c.stroke(); c.fillText(Math.round(v), pad - 5, Y(v) + 3); }
+      for (let v = 0; v <= max; v += stepV) { c.beginPath(); c.moveTo(pad, Y(v)); c.lineTo(w - 12, Y(v)); c.stroke(); c.fillText(v.toLocaleString("en-US"), pad - 5, Y(v) + 3); }
       c.textAlign = "center";
       steps.forEach((s, i) => c.fillText(i, X(i), h - 10));
       c.fillStyle = tok("--accent-soft"); c.beginPath(); c.moveTo(X(0), bot);
@@ -525,8 +548,8 @@
         c.fillStyle = bt ? tok("--trace") : tok("--accent"); c.beginPath(); c.arc(X(i), Y(s.pairs), bt ? 5 : 3.5, 0, 7); c.fill();
       });
       c.textAlign = "left"; c.fillStyle = tok("--muted");
-      c.textAlign = "right";
-      c.fillText("failing (point, vector) pairs per step · amber = two-gate step with back-tracking", w - 14, top + 14);
+      c.textAlign = "left"; c.fillStyle = tok("--muted");
+      c.fillText(w > 440 ? "failing (point, vector) pairs · amber = two-gate step" : "failing pairs per step", pad, 12);
     }
     redraws.push(draw); draw();
   }
