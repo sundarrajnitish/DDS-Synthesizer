@@ -157,4 +157,4 @@ model in `tools/dds_model.py` is compared with the HDL simulation sample by samp
 ## Credits
 
 DDS core: Martin Kumm, 2009, GPL-3.0 (see the file headers). `class.lib` is the Synopsys teaching library
-distributed with the course. Verification: Nithish Sundarraj, Concordia University, 2024; revisited 2026.
+distributed with the course. Verification: Nitish Sundarraj, Concordia University, 2024; revisited 2026.

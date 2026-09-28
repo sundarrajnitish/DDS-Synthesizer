@@ -33,7 +33,7 @@
 -- Note: phase_o is the stage-1 register, i.e. it leads ampl_o by two cycles.
 --
 -- Copyright (C) 2009 Martin Kumm (original design), GPL-3.0-or-later.
--- Refactoring and verification (C) 2024-2026 Nithish Sundarraj.
+-- Refactoring and verification (C) 2024-2026 Nitish Sundarraj.
 -------------------------------------------------------------------------------
 
 library ieee;
