@@ -37,7 +37,10 @@
   /* ------------------------------------------------------------------ canvas helper */
   function ctx2d(cv) {
     const dpr = window.devicePixelRatio || 1;
-    const w = cv.clientWidth || cv.parentElement.clientWidth, h = +cv.getAttribute("height");
+    // The design height lives in the markup's height attribute; remember it once,
+    // because cv.height is rescaled below by the device pixel ratio.
+    if (!cv.dataset.h) cv.dataset.h = cv.getAttribute("height");
+    const w = cv.clientWidth || cv.parentElement.clientWidth, h = +cv.dataset.h;
     cv.style.height = h + "px";
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     const c = cv.getContext("2d");
@@ -143,8 +146,10 @@
       const n = buf.length;
       buf.forEach((v, i) => { const x = i / (n - 1) * w, y = h / 2 - v / 512 * (h / 2 - 8); i ? c.lineTo(x, y) : c.moveTo(x, y); });
       c.stroke();
-      c.fillStyle = tok("--muted"); c.font = "11px " + tok("--f-mono");
-      c.fillText("ampl_o  FTW=0x03000000  f = 1.172 MHz", 8, 14);
+      c.font = "11px " + tok("--f-mono");
+      const lbl = "ampl_o · FTW 0x03000000 · 1.172 MHz";
+      c.fillStyle = tok("--surface"); c.fillRect(4, 3, c.measureText(lbl).width + 8, 16);
+      c.fillStyle = tok("--muted"); c.fillText(lbl, 8, 15);
     }
     redraws.push(draw);
     draw();

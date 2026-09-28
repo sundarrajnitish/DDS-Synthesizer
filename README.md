@@ -1,8 +1,8 @@
 # Formal Verification of a DDS Synthesizer
 
-[![formal verification](https://github.com/sundarrajnithish/DDS-Synthesizer/actions/workflows/verify.yml/badge.svg)](https://github.com/sundarrajnithish/DDS-Synthesizer/actions/workflows/verify.yml)
+[![formal verification](https://github.com/sundarrajnitish/DDS-Synthesizer/actions/workflows/verify.yml/badge.svg)](https://github.com/sundarrajnitish/DDS-Synthesizer/actions/workflows/verify.yml)
 
-**Interactive site:** https://sundarrajnithish.github.io/DDS-Synthesizer/ (runs a real equivalence checker on these netlists in your browser)
+**Interactive site:** https://sundarrajnitish.github.io/DDS-Synthesizer/ (runs a real equivalence checker on these netlists in your browser)
 
 A direct digital synthesizer (DDS) was synthesized to gates, and a second netlist of the same design was
 handed out with bugs planted in it. This repository verifies the design formally: RTL against
